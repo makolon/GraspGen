@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=45,<78", "wheel", "setuptools-scm"]
+requires = ["setuptools>=45,<78", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -35,7 +35,6 @@ dependencies = [
     "torch-geometric",
     
     # Core dependencies from requirements.txt
-    "pickle5",
     "h5py",
     "hydra-core", 
     "matplotlib",
@@ -63,7 +62,6 @@ dependencies = [
     "pyrender",
     "scene-synthesizer[recommend]",
     "imageio",
-    "pytest",
     "viser",
     
     # ZMQ serving
@@ -71,9 +69,6 @@ dependencies = [
     "msgpack",
     "msgpack-numpy",
     
-    # Pin setuptools to a version that still includes pkg_resources
-    # (required by torch==2.1.0 cpp_extension for building CUDA extensions like pointnet2_ops)
-    "setuptools>=45,<78",
 ]
 
 # Note: pointnet2_ops is a local dependency that must be installed separately.
@@ -93,6 +88,7 @@ dev = [
     "black",
     "isort",
     "flake8",
+    "pytest",
 ]
 serve = [
     "pyzmq",
