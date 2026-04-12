@@ -1,9 +1,11 @@
-import torch
-import numpy as np
-import trimesh
-import os
-from grasp_gen.robot import load_control_points_core, load_default_gripper_config
 from pathlib import Path
+
+import numpy as np
+import torch
+import trimesh
+
+from grasp_gen.robot import load_control_points_core, load_default_gripper_config
+
 
 class GripperModel(object):
     def __init__(self, data_root_dir=None):
@@ -18,8 +20,8 @@ class GripperModel(object):
     def get_gripper_visual_mesh(self):
         return self.mesh
 
-def get_gripper_offset_bins():
 
+def get_gripper_offset_bins():
     offset_bins = [
         0.0, 0.01360345836, 0.02720691672,
         0.04081037508, 0.05441383344, 0.0680172918,
@@ -33,6 +35,7 @@ def get_gripper_offset_bins():
     ]
     return offset_bins, offset_bin_weights
 
+
 def load_control_points() -> torch.Tensor:
     """
     Load the control points for the gripper, used for training.
@@ -45,10 +48,9 @@ def load_control_points() -> torch.Tensor:
     control_points = torch.from_numpy(control_points).float()
     return control_points.T
 
+
 def load_control_points_for_visualization():
-
     gripper_config = load_default_gripper_config(Path(__file__).stem)
-
     control_points = load_control_points_core(gripper_config)
 
     mid_point = (control_points[0] + control_points[1]) / 2

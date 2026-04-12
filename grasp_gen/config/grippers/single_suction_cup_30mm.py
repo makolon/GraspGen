@@ -1,10 +1,12 @@
-import torch
-import numpy as np
-import trimesh
-import os
-from grasp_gen.robot import load_control_points_core, load_default_gripper_config, load_visualize_control_points_multi_suction, parse_offset_transform_from_yaml
 from pathlib import Path
+
+import numpy as np
+import torch
+import trimesh
 import trimesh.transformations as tra
+
+from grasp_gen.robot import load_control_points_core, load_default_gripper_config, load_visualize_control_points_multi_suction, parse_offset_transform_from_yaml
+
 
 class GripperModel(object):
     def __init__(self, data_root_dir=None, simplified=True):
@@ -30,6 +32,7 @@ def load_visualize_control_points_suction():
     ]
     return load_visualize_control_points_multi_suction(pts)
 
+
 def load_control_points() -> torch.Tensor:
     """
     Load the control points for the gripper, used for training.
@@ -41,8 +44,8 @@ def load_control_points() -> torch.Tensor:
     control_points = torch.from_numpy(control_points).float()
     return control_points.T
 
-def load_control_points_for_visualization():
 
+def load_control_points_for_visualization():
     gripper_config = load_default_gripper_config(Path(__file__).stem)
     # TODO: Move this to gripper python script
     control_points = load_visualize_control_points_suction()
