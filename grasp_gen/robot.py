@@ -270,7 +270,7 @@ def load_default_gripper_config(gripper_name: str) -> Dict:
         Dict: Dictionary containing the gripper's default configuration.
     """
     conf_path = (
-        Path(__file__).parent.parent / "config" / "grippers" / f"{gripper_name}.yaml"
+        Path(__file__).parent / "config" / "grippers" / f"{gripper_name}.yaml"
     )
     config = load_gripper_yaml_file(conf_path)
     return config
@@ -325,7 +325,7 @@ def get_gripper_info(name: str) -> GripperInfo:
     import glob
 
     registered_grippers = glob.glob(
-        f"{Path(__file__).parent.parent}/config/grippers/*.yaml"
+        f"{Path(__file__).parent}/config/grippers/*.yaml"
     )
     registered_grippers = [Path(gripper).stem for gripper in registered_grippers]
     gripper_name = name
@@ -337,7 +337,7 @@ def get_gripper_info(name: str) -> GripperInfo:
 
     offset_bins, offset_bin_weights = None, None
     gripper_module = import_module_from_path(
-        f"{Path(__file__).parent.parent}/config/grippers/{gripper_name}.py"
+        f"{Path(__file__).parent}/config/grippers/{gripper_name}.py"
     )
     gripper_config = load_default_gripper_config(gripper_name)
 

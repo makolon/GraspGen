@@ -176,6 +176,37 @@ def validate_eval_section(cfg: omegaconf.DictConfig, gripper_config: str) -> Non
             )
 
 
+def merge_remote_training_config(cfg: omegaconf.DictConfig, gripper_config: str) -> None:
+    # Get the raw gripper name from the loaded file path
+    gripper_name = Path(gripper_config).stem
+    if gripper_name == "robotiq_2f_85":
+        gripper_name = "robotiq_2f_140"
+        
+    cfg_filename = f"graspgen_{gripper_name}.yml"
+    
+    # Check if the needed components are already present
+    needs_diffusion = "diffusion" not in cfg or "num_obs_dim" not in cfg.diffusion
+    has_valid_discriminator = "discriminator" in cfg and "num_obs_dim" in cfg.discriminator
+    needs_discriminator = not has_valid_discriminator and cfg.eval.model_name == "diffusion-discriminator"
+    needs_m2t2 = "m2t2" not in cfg and cfg.eval.model_name == "m2t2"
+    
+    if not (needs_diffusion or needs_discriminator or needs_m2t2):
+        return
+        
+    # Download the configuration file
+    remote_cfg_path = download_checkpoint_if_missing(cfg_filename, cfg)
+    remote_cfg = omegaconf.OmegaConf.load(remote_cfg_path)
+    
+    # Merge missing sections
+    for section in ["data", "diffusion", "discriminator", "m2t2"]:
+        if section in remote_cfg:
+            if section not in cfg:
+                cfg[section] = remote_cfg[section]
+            else:
+                # Merge keeping user overrides in cfg
+                cfg[section] = omegaconf.OmegaConf.merge(remote_cfg[section], cfg[section])
+
+
 def load_grasp_cfg(gripper_config: str) -> omegaconf.DictConfig:
     """
     Loads the grasp configuration file and updates the checkpoint paths to be relative to the gripper config file.
@@ -189,6 +220,7 @@ def load_grasp_cfg(gripper_config: str) -> omegaconf.DictConfig:
     """
     cfg = omegaconf.OmegaConf.load(gripper_config)
     normalize_eval_section(cfg, gripper_config)
+    merge_remote_training_config(cfg, gripper_config)
     validate_eval_section(cfg, gripper_config)
 
     ckpt_root_dir = Path(gripper_config).parent
