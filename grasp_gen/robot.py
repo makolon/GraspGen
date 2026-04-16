@@ -10,9 +10,7 @@
 """
 Modules to compute gripper poses from contact masks and parameters.
 """
-import glob
 import importlib.util
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,8 +21,6 @@ import torch
 import trimesh
 import trimesh.transformations as tra
 import yaml
-
-from grasp_gen.dataset.eval_utils import load_urdf_scene
 
 
 @dataclass
@@ -120,7 +116,7 @@ def load_control_points_core(gripper_config: Dict):
         control_points = get_canonical_gripper_control_points(width, depth)
     else:
         raise NotImplementedError(
-            f"Unable to load control points for gripper {gripper_name}. Neither control_points nor width and depth are specified."
+            f"Unable to load control points for gripper gripper_name. Neither control_points nor width and depth are specified."
         )
     return control_points
 

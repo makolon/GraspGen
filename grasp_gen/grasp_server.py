@@ -7,22 +7,157 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import os
-import sys
 
 import time
 import numpy as np
 import omegaconf
 import torch
 from pathlib import Path
+from huggingface_hub import hf_hub_download, list_repo_files
 
 from grasp_gen.dataset.dataset import collate
 from grasp_gen.models.grasp_gen import GraspGen
 from grasp_gen.models.m2t2 import M2T2
-from grasp_gen.utils.point_cloud_utils import knn_points, point_cloud_outlier_removal
-from grasp_gen.robot import load_control_points_for_visualization
+from grasp_gen.utils.point_cloud_utils import point_cloud_outlier_removal
 from grasp_gen.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+DEFAULT_CHECKPOINT_REPO_ID = "adithyamurali/GraspGenModels"
+DEFAULT_CHECKPOINT_REPO_SUBFOLDER = "checkpoints"
+DEFAULT_CHECKPOINT_REPO_REVISION = "main"
+
+
+def _checkpoint_path(base_dir: Path, checkpoint: str) -> str:
+    checkpoint_path = Path(checkpoint)
+    if checkpoint_path.is_absolute():
+        return str(checkpoint_path)
+    return str(base_dir / checkpoint_path)
+
+
+def _checkpoint_repo_settings(cfg: omegaconf.DictConfig) -> tuple[str, str, str]:
+    repo_id = DEFAULT_CHECKPOINT_REPO_ID
+    subfolder = DEFAULT_CHECKPOINT_REPO_SUBFOLDER
+    revision = DEFAULT_CHECKPOINT_REPO_REVISION
+
+    if "checkpoint_repository" in cfg:
+        if "repo_id" in cfg.checkpoint_repository:
+            repo_id = cfg.checkpoint_repository.repo_id
+        if "subfolder" in cfg.checkpoint_repository:
+            subfolder = cfg.checkpoint_repository.subfolder
+        if "revision" in cfg.checkpoint_repository:
+            revision = cfg.checkpoint_repository.revision
+
+    if "GRASPGEN_CHECKPOINT_REPO_ID" in os.environ:
+        repo_id = os.environ["GRASPGEN_CHECKPOINT_REPO_ID"]
+    if "GRASPGEN_CHECKPOINT_REPO_SUBFOLDER" in os.environ:
+        subfolder = os.environ["GRASPGEN_CHECKPOINT_REPO_SUBFOLDER"]
+    if "GRASPGEN_CHECKPOINT_REPO_REVISION" in os.environ:
+        revision = os.environ["GRASPGEN_CHECKPOINT_REPO_REVISION"]
+
+    subfolder = subfolder.strip("/")
+
+    return repo_id, subfolder, revision
+
+
+def _download_checkpoint_if_missing(
+    checkpoint: str,
+    cfg: omegaconf.DictConfig,
+) -> str:
+    checkpoint_path = Path(checkpoint)
+    if checkpoint_path.exists():
+        return str(checkpoint_path)
+
+    repo_id, subfolder, revision = _checkpoint_repo_settings(cfg)
+    checkpoint_name = checkpoint_path.name
+    remote_path = checkpoint_name
+    if subfolder != "":
+        remote_path = f"{subfolder}/{checkpoint_name}"
+
+    repo_files = set(list_repo_files(repo_id=repo_id, revision=revision))
+
+    if remote_path in repo_files:
+        if subfolder == "":
+            remote_subfolder = None
+        else:
+            remote_subfolder = subfolder
+    elif checkpoint_name in repo_files:
+        remote_subfolder = None
+        remote_path = checkpoint_name
+    else:
+        raise FileNotFoundError(
+            f"Checkpoint {checkpoint} does not exist locally and was not found in "
+            f"HuggingFace repo {repo_id} (looked for {remote_path})."
+        )
+
+    logger.info(
+        "Downloading missing checkpoint %s from %s (%s)",
+        checkpoint_name,
+        repo_id,
+        remote_path,
+    )
+
+    return hf_hub_download(
+        repo_id=repo_id,
+        filename=checkpoint_name,
+        subfolder=remote_subfolder,
+        revision=revision,
+    )
+
+
+def _normalize_eval_section(cfg: omegaconf.DictConfig) -> None:
+    if "eval" not in cfg:
+        cfg.eval = omegaconf.OmegaConf.create({})
+
+    if "model_name" not in cfg.eval:
+        if "model_name" in cfg:
+            cfg.eval.model_name = cfg.model_name
+        elif "diffusion" in cfg and "discriminator" in cfg:
+            cfg.eval.model_name = "diffusion-discriminator"
+        elif "m2t2" in cfg:
+            cfg.eval.model_name = "m2t2"
+
+    if "checkpoint" not in cfg.eval:
+        if "checkpoint" in cfg:
+            cfg.eval.checkpoint = cfg.checkpoint
+        elif "generator_checkpoint" in cfg:
+            cfg.eval.checkpoint = cfg.generator_checkpoint
+
+    if "discriminator" not in cfg and "discriminator_checkpoint" in cfg:
+        cfg.discriminator = omegaconf.OmegaConf.create({})
+
+    if (
+        "discriminator" in cfg
+        and "checkpoint" not in cfg.discriminator
+        and "discriminator_checkpoint" in cfg
+    ):
+        cfg.discriminator.checkpoint = cfg.discriminator_checkpoint
+
+
+def _validate_eval_section(cfg: omegaconf.DictConfig, gripper_config: str) -> None:
+    if "eval" not in cfg:
+        raise KeyError(f"Missing key eval in config: {gripper_config}")
+
+    if "model_name" not in cfg.eval:
+        raise KeyError(
+            "Missing key eval.model_name in config. "
+            "Set eval.model_name or top-level model_name."
+        )
+
+    if "checkpoint" not in cfg.eval:
+        raise KeyError(
+            "Missing key eval.checkpoint in config. "
+            "Set eval.checkpoint, top-level checkpoint, or generator_checkpoint."
+        )
+
+    if cfg.eval.model_name == "diffusion-discriminator":
+        if "discriminator" not in cfg or "checkpoint" not in cfg.discriminator:
+            raise KeyError(
+                "Missing discriminator.checkpoint in config for "
+                "model_name=diffusion-discriminator. "
+                "Set discriminator.checkpoint or top-level discriminator_checkpoint."
+            )
 
 
 def load_grasp_cfg(gripper_config: str) -> omegaconf.DictConfig:
@@ -37,14 +172,35 @@ def load_grasp_cfg(gripper_config: str) -> omegaconf.DictConfig:
         grasp_cfg: Hydra config object with updated checkpoint paths
     """
     cfg = omegaconf.OmegaConf.load(gripper_config)
+    _normalize_eval_section(cfg)
+    _validate_eval_section(cfg, gripper_config)
+
     ckpt_root_dir = Path(gripper_config).parent
-    cfg.eval.checkpoint = str(ckpt_root_dir / cfg.eval.checkpoint)
-    cfg.discriminator.checkpoint = str(ckpt_root_dir / cfg.discriminator.checkpoint)
-    assert (
-        cfg.data.gripper_name
-        == cfg.diffusion.gripper_name
-        == cfg.discriminator.gripper_name
-    )
+    cfg.eval.checkpoint = _checkpoint_path(ckpt_root_dir, cfg.eval.checkpoint)
+    cfg.eval.checkpoint = _download_checkpoint_if_missing(cfg.eval.checkpoint, cfg)
+
+    if cfg.eval.model_name == "diffusion-discriminator":
+        cfg.discriminator.checkpoint = _checkpoint_path(
+            ckpt_root_dir, cfg.discriminator.checkpoint
+        )
+        cfg.discriminator.checkpoint = _download_checkpoint_if_missing(
+            cfg.discriminator.checkpoint, cfg
+        )
+
+    if (
+        "data" in cfg
+        and "diffusion" in cfg
+        and "discriminator" in cfg
+        and "gripper_name" in cfg.data
+        and "gripper_name" in cfg.diffusion
+        and "gripper_name" in cfg.discriminator
+    ):
+        assert (
+            cfg.data.gripper_name
+            == cfg.diffusion.gripper_name
+            == cfg.discriminator.gripper_name
+        )
+
     return cfg
 
 
@@ -236,15 +392,3 @@ class GraspGenSampler:
             raise NotImplementedError(f"Invalid model {self.cfg.eval.model_name}!")
         grasps[:, :3, 3] += obj_pcd_center
         return grasps, grasp_conf, None
-
-    # def get_grasp_points(self, pose_array: Pose, gripper_name = None):
-    #     if gripper_name is None:
-    #         gripper_name = self.cfg.data.gripper_name
-    #     line_points = load_control_points_for_visualization(gripper_name)
-    #     line_points = torch.as_tensor(line_points, device="cuda", dtype=torch.float32).view(-1,3)
-
-    #     line_points = line_points.unsqueeze(0).repeat(pose_array.shape[0],1,1)
-
-    #     line_points = pose_array.batch_transform_points(line_points)
-
-    #     return line_points
