@@ -29,14 +29,14 @@ DEFAULT_CHECKPOINT_REPO_SUBFOLDER = "checkpoints"
 DEFAULT_CHECKPOINT_REPO_REVISION = "main"
 
 
-def _checkpoint_path(base_dir: Path, checkpoint: str) -> str:
+def checkpoint_path(base_dir: Path, checkpoint: str) -> str:
     checkpoint_path = Path(checkpoint)
     if checkpoint_path.is_absolute():
         return str(checkpoint_path)
     return str(base_dir / checkpoint_path)
 
 
-def _checkpoint_repo_settings(cfg: omegaconf.DictConfig) -> tuple[str, str, str]:
+def checkpoint_repo_settings(cfg: omegaconf.DictConfig) -> tuple[str, str, str]:
     repo_id = DEFAULT_CHECKPOINT_REPO_ID
     subfolder = DEFAULT_CHECKPOINT_REPO_SUBFOLDER
     revision = DEFAULT_CHECKPOINT_REPO_REVISION
@@ -61,7 +61,7 @@ def _checkpoint_repo_settings(cfg: omegaconf.DictConfig) -> tuple[str, str, str]
     return repo_id, subfolder, revision
 
 
-def _download_checkpoint_if_missing(
+def download_checkpoint_if_missing(
     checkpoint: str,
     cfg: omegaconf.DictConfig,
 ) -> str:
@@ -69,7 +69,7 @@ def _download_checkpoint_if_missing(
     if checkpoint_path.exists():
         return str(checkpoint_path)
 
-    repo_id, subfolder, revision = _checkpoint_repo_settings(cfg)
+    repo_id, subfolder, revision = checkpoint_repo_settings(cfg)
     checkpoint_name = checkpoint_path.name
     remote_path = checkpoint_name
     if subfolder != "":
@@ -106,7 +106,7 @@ def _download_checkpoint_if_missing(
     )
 
 
-def _normalize_eval_section(cfg: omegaconf.DictConfig) -> None:
+def normalize_eval_section(cfg: omegaconf.DictConfig, gripper_config: str) -> None:
     if "eval" not in cfg:
         cfg.eval = omegaconf.OmegaConf.create({})
 
@@ -117,25 +117,41 @@ def _normalize_eval_section(cfg: omegaconf.DictConfig) -> None:
             cfg.eval.model_name = "diffusion-discriminator"
         elif "m2t2" in cfg:
             cfg.eval.model_name = "m2t2"
+        else:
+            cfg.eval.model_name = "diffusion-discriminator"
 
     if "checkpoint" not in cfg.eval:
         if "checkpoint" in cfg:
             cfg.eval.checkpoint = cfg.checkpoint
         elif "generator_checkpoint" in cfg:
             cfg.eval.checkpoint = cfg.generator_checkpoint
+        else:
+            gripper_name = Path(gripper_config).stem
+            # FALLBACK to robotiq_2f_140 if robotiq_2f_85 is used
+            # since 2f_85 weights are not present in GraspGenModels checkpoint repo currently.
+            if gripper_name == "robotiq_2f_85":
+                gripper_name = "robotiq_2f_140"
+            cfg.eval.checkpoint = f"graspgen_{gripper_name}_gen.pth"
 
     if "discriminator" not in cfg and "discriminator_checkpoint" in cfg:
         cfg.discriminator = omegaconf.OmegaConf.create({})
 
-    if (
-        "discriminator" in cfg
-        and "checkpoint" not in cfg.discriminator
-        and "discriminator_checkpoint" in cfg
-    ):
-        cfg.discriminator.checkpoint = cfg.discriminator_checkpoint
+    if cfg.eval.model_name == "diffusion-discriminator":
+        if "discriminator" not in cfg:
+            cfg.discriminator = omegaconf.OmegaConf.create({})
+        if "checkpoint" not in cfg.discriminator:
+            if "discriminator_checkpoint" in cfg:
+                cfg.discriminator.checkpoint = cfg.discriminator_checkpoint
+            else:
+                gripper_name = Path(gripper_config).stem
+                # FALLBACK to robotiq_2f_140 if robotiq_2f_85 is used
+                # since 2f_85 weights are not present in GraspGenModels checkpoint repo currently.
+                if gripper_name == "robotiq_2f_85":
+                    gripper_name = "robotiq_2f_140"
+                cfg.discriminator.checkpoint = f"graspgen_{gripper_name}_dis.pth"
 
 
-def _validate_eval_section(cfg: omegaconf.DictConfig, gripper_config: str) -> None:
+def validate_eval_section(cfg: omegaconf.DictConfig, gripper_config: str) -> None:
     if "eval" not in cfg:
         raise KeyError(f"Missing key eval in config: {gripper_config}")
 
@@ -172,18 +188,18 @@ def load_grasp_cfg(gripper_config: str) -> omegaconf.DictConfig:
         grasp_cfg: Hydra config object with updated checkpoint paths
     """
     cfg = omegaconf.OmegaConf.load(gripper_config)
-    _normalize_eval_section(cfg)
-    _validate_eval_section(cfg, gripper_config)
+    normalize_eval_section(cfg, gripper_config)
+    validate_eval_section(cfg, gripper_config)
 
     ckpt_root_dir = Path(gripper_config).parent
-    cfg.eval.checkpoint = _checkpoint_path(ckpt_root_dir, cfg.eval.checkpoint)
-    cfg.eval.checkpoint = _download_checkpoint_if_missing(cfg.eval.checkpoint, cfg)
+    cfg.eval.checkpoint = checkpoint_path(ckpt_root_dir, cfg.eval.checkpoint)
+    cfg.eval.checkpoint = download_checkpoint_if_missing(cfg.eval.checkpoint, cfg)
 
     if cfg.eval.model_name == "diffusion-discriminator":
-        cfg.discriminator.checkpoint = _checkpoint_path(
+        cfg.discriminator.checkpoint = checkpoint_path(
             ckpt_root_dir, cfg.discriminator.checkpoint
         )
-        cfg.discriminator.checkpoint = _download_checkpoint_if_missing(
+        cfg.discriminator.checkpoint = download_checkpoint_if_missing(
             cfg.discriminator.checkpoint, cfg
         )
 
